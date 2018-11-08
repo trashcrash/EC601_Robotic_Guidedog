@@ -5,6 +5,7 @@
 #######################################################
 
 # - the starting position is the center position of the map, one layer above.
+# - the A* algorithm starts at the min total cost location in the first row
 # - the first step the person can take is directly in front of them or
 #	the diagonal in front of them 
 # - the first row of the list is the first step someone will take.
@@ -15,25 +16,29 @@
 #	straight motion is 1 and the cost given to diagonal motions is 2
 # - if there is no path available, the planner will return []
 # - the planner also needs to return the size of the map (just width)
+# - the graph generator adds additional costs if there are obstacles
+#	near the position you are calculating the cost for.
 
 #######################################################
 #######################################################
 
 #######################################################
-################ Things to Consider ###################
+################## Things to Add ######################
 #######################################################
 # - if there is a row filled with obstacles and the goal 
 #	is behind the row of obstacles then pass back an empty
 #	path or should we pass back a path that gets you closest
 #	to it?
-# - need to add in extra costs to open positions that are
-#	near obstacles (as we are building the graph when you
-#	are looking at a given position, check if it is next 
-#	an obstacle on the map. if it is, then give it a value 
-#	of 50!)
-# - The goal is an actual obstacle on the map. So I need
-#	to find the location closest to there?
+# - need to add an algorithm for finding the goal location
+#	if it isn't provided by the mapping team. Need to find the
+#	farthest free location.
+# - add error check. If the get_neighbors of idxNBest is
+#	then return the current path. This basically means
+#	there are obstacles preventing you from moving 
+#	forwards
 
+#######################################################
+#######################################################
 
 
 #Import Libraries
@@ -65,6 +70,9 @@ class path_planner(object):
 		else:
 			self.goal = goal
 
+		# Set the goal location on the map equal to a free space
+		self.map[goal[0]][goal[1]] = 0
+
 		# Initialize the heuristics map
 		m_v_map = []
 		[m_v_map.append([m_v]*width) for x in range(0,height)]
@@ -76,11 +84,9 @@ class path_planner(object):
 		[one_layer.append([m_v]*width) for x in range(0,width)]
 		self.graph=[one_layer.copy()]
 
-		# Initialize the openset with a starting location. For us this will be the center point
-		# of the first row.
-		self.openset = [[0,center]]
-
-		self.closedsed = []
+		# Initialize the open and the closed sets
+		self.openset = {}
+		self.closedset = []
 
 		# Initialize the path list
 		self.path = []
@@ -93,12 +99,11 @@ class path_planner(object):
 
 	def gen_heuristics(self, heuristic_function=1):
 		# loop over the heuristics map adding distances to each cell from the goal 
-		# get the list of neighbors that are decided
 		# If the heuristic_function is 1 then use diagonal distance max(abs(x-x_goal), abs(y-y_goal)),
 		# otherwise use the euclidean distance
 		for iHeight in range(len(self.heuristics)):
-			for iWidth in range(len(self.heuristics)):
-				# Use the diagonal distance as the heuristic function
+			for iWidth in range(len(self.heuristics[0])):
+				# Use the diagonal distance as the heuristics function
 				if heuristic_function==1:
 					self.heuristics[iHeight][iWidth] = max(abs(iHeight-self.goal[0]), abs(iWidth-self.goal[1]))
 				else:
@@ -112,7 +117,9 @@ class path_planner(object):
 		# | (i, j-1)   |  (i, j,)  |  (i, j+1)   |
 		# | (i+1, j-1) | (i+1, j,) |  (i+1, j+1) |
 
-		
+	
+	# This method get's all of the neighbors that are directly next to a given query location
+	# i.e. if the query is (i,j) then it would return (i, j-1), (i-1, j,), (i, j+1)	
 	def get_next_2_you_neighbors(self, row_val, NQuery_j):
 		next2you = [[row_val, NQuery_j-1], [row_val+1, NQuery_j], [row_val, NQuery_j+1]]
 		count_next2you_obstacles = 0
@@ -124,6 +131,8 @@ class path_planner(object):
 					count_next2you_obstacles+=1
 		return count_next2you_obstacles
 
+	# This method get's all of the neighbors that are diagonal to a given query location
+	# i.e. if the query is (i,j) then it would return (i-1, j+1) and (i-1, j-1)	
 	def get_diag_2_you(self, row_val, NQuery_j):
 		diag2you = [[row_val+1, NQuery_j-1], [row_val+1, NQuery_j+1]]
 		count_diag2you_obstacles = 0
@@ -136,6 +145,8 @@ class path_planner(object):
 		return count_diag2you_obstacles
 
 
+	# This method generates the graph of a given map. It calculates the cost to move from every node
+	# to another possible node. It adds extra costs if there are nearby obstacles.
 	def gen_graph(self):
 		# Set up the graph 
 		# if either of the first step positions (first row), center, center-1, or center+1 
@@ -159,7 +170,6 @@ class path_planner(object):
 		# for the given pair of rows. Then append this to the start of the graph!
 		for i_row in range(self.height-1):
 			new_layer = []
-			print("The row is: ", i_row)
 			[new_layer.append([m_v]*self.width) for x in range(0,self.width)]
 			for i_col in range(self.width):
 				for j_col in range(self.width):
@@ -183,75 +193,154 @@ class path_planner(object):
 			self.graph.append(new_layer)
 		return self.graph
 
+	# This function picks the minimum cost index in the first row as the starting position on the map.
+	def pick_start_pos(self):
+		# If the first row is all obstacles then pass back an empty start list, which
+		# should tell the path_planner that there is no start
 
-	def path_planner(self):
-		# The starting location is always from the row beneath, so our first row
-		# will always be the heuristics + cost for the immediate three positions. need to add the 
-		# center position to the open list. 
+		# Add in the heuristics for each position and then append it to a total cost list
+		# then get the min value and index for it.
+		# the first row of the graph
+		graph_vals = self.graph[0][self.center]
+		total_cost = []
+		for a_pos in range(len(graph_vals)):
+			if graph_vals[a_pos] != m_v:
+				total_cost = total_cost + [graph_vals[a_pos]+self.heuristics[0][a_pos]]
 
+		if (self.map[0][self.center]==1) and (self.map[0][self.center-1]==1) and (self.map[0][self.center+1]==1):
+			starting_location = []
+			return starting_location
+		else:
+			starting_location = [total_cost.index(min(total_cost))]
+		return starting_location
+
+
+	def path_planner(self, starting_location):
 		# If there is an obstacle in the center, center-1, and center + 1 then 
 		# return self.path as an empty list
-		if (self.map[0][self.center]==1) and (self.map[0][self.center-1]==1) and (self.map[0][self.center+1]==1):
-			# then return self.path = []
+		if len(self.pick_start_pos())==0:
 			self.path = []
 			return self.path
 		else:
 			# there is a possible path. so go find it :)
-			self.path = [2, 1]
+			# initialize the dictionary to hold all of the neighbors, the key is a given location, and 
+			# the values is a list of tuples of all neighbors coordinates
+			all_cost_backpointers = {}
+			all_neighbors = {}
+			
+			# Add the starting node to the openset along with its cost
+			row = 0 # The row that the starting_position is in.
+			starting_location_cost = self.heuristics[0][starting_location[0]] + self.graph[0][self.center][starting_location[0]]
+			self.openset[(row, starting_location[0])] = starting_location_cost
+			print(self.openset)
+			
+			# Repeat the following steps until the open set is empty
+			# Get the lowest cost item from the open list and add it to the closed list
+			#while (len(self.openset)!=0):
+			row +=1
+			idxNbest=min(self.openset.items(), key=lambda x: x[1])[0]
+			self.openset.pop(idxNbest, None)
+			print("the idxBest: ",idxNbest)
+			self.closedset.append(idxNbest)
+			print(self.closedset)
+
+			# Add the information for the starting_location to the cost/backpointer dictionary
+			all_cost_backpointers[idxNbest]  = [(), ()]
+			
+			# Check if idxNBest is the goal
+			if idxNbest == self.goal:
+				#break # uncomment this line when you turn the while loop back on
+				print("break")
+
+			# Get the neighbors of idxNbest
+			# get the row on the graph that corresponds to the neighbors of idxNBest
+			graph_vals = self.graph[idxNbest[0]+1][idxNbest[1]]
+			print("Graph_vals: ",graph_vals)
+			available_neighbors = []
+			for a_neighbor in range(len(graph_vals)):
+				# Loop over each neighbor that is not m_v and check if it is in the closed set
+				if graph_vals[a_neighbor]==m_v:
+					pass # We only care about free positions
+				else:
+					# Check if the neighbor is not in the closed set, then do steps 9-16
+					if (row, a_neighbor) not in self.closedset:
+						available_neighbors.append((row, a_neighbor))
+						 
+						# now check if this valid neighbor is already in the open set
+						if (row, a_neighbor) not in self.openset:
+							print("HERE: ", row, a_neighbor)
+							# add the backpointer and the cost to the dictionary
+							cost = self.heuristics[row][a_neighbor] + self.graph[row][idxNbest[1]][a_neighbor]
+							all_cost_backpointers[(row, a_neighbor)] = [idxNbest, cost]
+							# add this neighbor to the openset
+					#elif : check the costs
+
+
+
+			all_neighbors[idxNbest]= (available_neighbors)			
+			print(all_neighbors)
+			print(all_cost_backpointers)
+
+				
+
+
+			# Need to figure out how to name each node on the graph, create a dictionary with the node
+			# as the key and the coordinates as the data
+			# Pick the lowest cost element from the openset
+
+			# test path
+			self.path = self.path + starting_location
 			return self.path
 
 
+if __name__ == "__main__":
+	# Testing Here!
+	default_map = [
+	        [0, 0, 0], # this is the starting row
+	        [1, 0, 0],
+	        [0, 0, 0],
+	        [0, 1, 0],
+	        [0, 1, 1],
+	        [0, 0, 0],
+	        [0, 1, 0],
+	        [1, 0, 0]
+	    ]
 
-# Testing Here!
-default_map = [
-        [0, 0, 0],
-        [1, 0, 0],
-        [0, 0, 0],
-        [0, 1, 0],
-        [0, 1, 1],
-        [0, 0, 0],
-        [0, 1, 0],
-        [1, 1, 0]
-    ]
+	small_map = [
+	        [0, 0, 0],
+	        [1, 0, 1],
+	        [0, 1, 0]]
 
-small_map = [
-        [0, 0, 0],
-        [1, 0, 1],
-        [0, 1, 0]]
+	big_map = [
+	    [0, 0, 0, 0, 0],
+	    [1, 1, 0, 0, 0],
+	    [0, 0, 0, 1, 1],
+	    [0, 0, 0, 0, 1],
+	    [0, 0, 0, 1, 0]]
 
-big_map = [
-    [0, 0, 0, 0, 0],
-    [1, 1, 0, 0, 0],
-    [0, 0, 0, 1, 1],
-    [0, 0, 0, 0, 1],
-    [0, 0, 0, 1, 0]]
-
-blocked_map = [
-        [1, 1, 1],
-        [1, 0, 0],
-        [0, 0, 0],
-        [0, 1, 0],
-        [0, 1, 1],
-        [0, 0, 0],
-        [0, 1, 0],
-        [1, 1, 0]
-    ]
+	blocked_map = [
+	        [1, 1, 1],
+	        [1, 0, 0],
+	        [0, 0, 0],
+	        [0, 1, 0],
+	        [0, 1, 1],
+	        [0, 0, 0],
+	        [0, 1, 0],
+	        [1, 1, 0]
+	    ]
 
 
-# Test the Class
-p = path_planner(default_map, [4,2])
-#print(p.map)
-#print(p.graph)
-#print(p.heuristics)
-# print(p.graph)
-t = p.gen_graph()
-# diags = p.get_diag_2_you(0, 1)
-# print(diags)
-print(t)
+	# Test the Class
+	p = path_planner(default_map, [4,2])
+	h = p.gen_heuristics(2)
+	t = p.gen_graph()
+	print(p.graph)
+	# print("Heuristic")
+	# print(p.heuristics)
+	startpos = p.pick_start_pos()
+	print(p.path_planner(startpos))
 
-#print(p.path_planner())
-
-# for i in range(len(t)):
-# 	for j in range(len(t[0])):
-# 		print(t[i][j])
+	# for i in range(len(t)):
+	# 	for j in range(len(t[0])):
+	# 		print(t[i][j])
 
