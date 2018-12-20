@@ -1,5 +1,6 @@
 import sys
 import cv2
+import time
 import numpy as np
 m_v = float("inf")
 
@@ -215,40 +216,41 @@ class path_planner(object):
             opt_path.insert(0, prev_pos)
         return opt_path
 
-    def find_default_target(self):
+    def find_default_target(self, min_row):
         # find the default target based on minimal distances
         height = np.array(self.values).shape[0]
         width = np.array(self.values).shape[1]
 
         center = int((width - 1) / 2)
-        for i in range(height-1, 0, -1):
+        for i in range(height-1, min_row, -1):
             if (self.values[i][center] != m_v):
                 return [i, center]
 
-        return []
+        return None
 
     def check_target_valid(self, target):
         # check if the target is valid in current map
         return (not self.values[target[0]][target[1]] == m_v)
 
-    def draw_path(self, path):
+    def draw_path(self, path, lines=False):
 
-        unit_size = 60
+        unit_size = 10
         height = len(self.map)
         width = len(self.map[0])
         t_h = unit_size * height
         t_w = unit_size * width
         world = np.array([[[240] * 3] * (t_w)] * (t_h)).astype(np.uint8)
 
-        for x in range(0, t_w, unit_size):
-            pt1 = (x, 0)
-            pt2 = (x, t_h)
-            world = cv2.line(world, pt1, pt2, (255, 0, 0))
-        
-        for y in range(0, t_h, unit_size):
-            pt1 = (0, y)
-            pt2 = (t_w, y)
-            world = cv2.line(world, pt1, pt2, (255, 0, 0))
+        if lines:
+            for x in range(0, t_w, unit_size):
+                pt1 = (x, 0)
+                pt2 = (x, t_h)
+                world = cv2.line(world, pt1, pt2, (255, 0, 0))
+            
+            for y in range(0, t_h, unit_size):
+                pt1 = (0, y)
+                pt2 = (t_w, y)
+                world = cv2.line(world, pt1, pt2, (255, 0, 0))
 
         # Draw Obstacles
         ofs = int(unit_size / 5)
@@ -258,7 +260,7 @@ class path_planner(object):
                     # Draw an obstacle in world
                     pt1 = (j * unit_size + ofs, i * unit_size + ofs)
                     pt2 = ((j+1) * unit_size - ofs, (i+1) * unit_size - ofs)
-                    cv2.rectangle(world, pt1, pt2, (0, 0, 255), 5)
+                    cv2.rectangle(world, pt1, pt2, (0, 0, 200), 3)
 
         # Draw Optimal Path 
         x_ofs = int(unit_size / 2)
@@ -278,7 +280,8 @@ class path_planner(object):
                 world = cv2.circle(world, pt2, int(unit_size / 3), (255, 0, 255), 10)
 
         world = np.flip(np.array(world), 0)
-        cv2.imshow("path", world)
+        #cv2.imshow("path", world)
+        return world
 
 if __name__ == "__main__":
     default_map = [
@@ -306,32 +309,45 @@ if __name__ == "__main__":
 
     debug_map = [
         [0., 0., 0., 0., 0., 0., 0., 0., 0.],
-        [0., 0., 0., 1., 1., 0., 0., 0., 0.],
-        [0., 0., 1., 1., 1., 0., 0., 0., 0.],
-        [0., 0., 1., 1., 0., 0., 1., 0., 0.],
-        [0., 1., 1., 1., 1., 1., 1., 0., 0.],
-        [0., 1., 1., 1., 1., 1., 0., 0., 0.],
-        [0., 1., 1., 1., 1., 0., 0., 0., 0.],
-        [0., 0., 0., 0., 0., 0., 0., 0., 0.],
+        [0., 0., 0., 1., 0., 0., 0., 0., 0.],
+        [0., 0., 1., 1., 0., 0., 0., 0., 0.],
+        [0., 0., 1., 0., 0., 0., 1., 0., 0.],
+        [0., 1., 1., 0., 0., 1., 1., 0., 0.],
+        [0., 1., 1., 0., 0., 1., 0., 0., 0.],
+        [0., 1., 1., 0., 0., 0., 0., 0., 0.],
+        [0., 0., 0., 0., 1., 0., 0., 0., 0.],
         [0., 0., 0., 0., 0., 0., 0., 0., 0.],
         [0., 0., 0., 0., 0., 0., 0., 0., 0.],
         [0., 0., 0., 0., 0., 0., 0., 0., 0.],
         [0., 0., 0., 0., 0., 0., 0., 0., 0.]
         ]
-    p = path_planner(debug_map)
 
+    big_maper = [
+        [0, 0, 0, 0, 0],
+        [1, 0, 0, 0, 0],
+        [0, 0, 1, 1, 1],
+        [1, 0, 0, 1, 1],
+        [0, 0, 1, 0, 0]]
+
+    start_time = time.time()
+    p = path_planner(big_maper)
     p.gen_nodes()
-    print(p.nodes)
+    # print(p.nodes)
+    start_graph = time.time()
     p.gen_paths()
+    path_graph_time = time.time()
     p.gen_buffer_mats()
     p.plan()
-    target = p.find_default_target()
+    target = p.find_default_target(0)
     if len(target) > 0:
-        print(p.paths)
-        print(p.values)
-        print(p.prevs)
-        path = p.find_optimal_path([3,4])
-        p.draw_path(path)
+        # print(p.paths)
+        # print(p.values)
+        # print(p.prevs)
+        path = p.find_optimal_path(target)
+        end_time = time.time()
+        # p.draw_path(path)
 
-        cv2.waitKey(0)
+        # cv2.waitKey(0)
+        print("Total TIme: ", end_time - start_time)
+        print("Graph TIme: ", path_graph_time - start_graph)
                       
